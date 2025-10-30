@@ -2,50 +2,55 @@ import express from "express";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
 import fs from "fs";
-import { fileURLToPath } from "url";
-import path from "path";
+import { randomUUID } from "crypto";
 
 const app = express();
 app.use(express.raw({ type: "audio/mpeg", limit: "50mb" }));
 
-// ruta principal
 app.get("/", (_, res) => {
   res.send("🎵 Preview Service online. Send POST with MP3 binary to /generate");
 });
 
-// endpoint principal
 app.post("/generate", async (req, res) => {
   try {
-    const inputPath = "/tmp/input.mp3";
-    const outputPath = "/tmp/preview.mp3";
+    // Crea un nombre temporal único
+    const id = randomUUID();
+    const inputPath = `/tmp/input-${id}.mp3`;
+    const outputPath = `/tmp/preview-${id}.mp3`;
 
-    // guarda el binario recibido
+    // Guarda el binario recibido
     fs.writeFileSync(inputPath, req.body);
 
-    // procesa con FFmpeg (corta primeros 10s)
     ffmpeg.setFfmpegPath(ffmpegPath);
     ffmpeg(inputPath)
       .setStartTime(0)
-      .duration(20)
+      .duration(20) // segundos de preview
       .audioCodec("libmp3lame")
       .audioBitrate("128k")
       .audioFrequency(44100)
       .on("end", () => {
         const buffer = fs.readFileSync(outputPath);
-        res.setHeader("Content-Type", "audio/mpeg");
-        res.setHeader("Content-Disposition", 'inline; filename="preview.mp3"');
-        res.send(buffer);
+
+        // Limpieza de archivos temporales
         fs.unlinkSync(inputPath);
         fs.unlinkSync(outputPath);
+
+        // Enviamos solo el binario recortado con metadatos
+        res.setHeader("Content-Type", "application/json");
+        res.send({
+          filename: `${id}_preview.mp3`,
+          mimeType: "audio/mpeg",
+          data: buffer.toString("base64"),
+        });
       })
       .on("error", (err) => {
         console.error(err);
-        res.status(500).send("❌ Error processing file: " + err.message);
+        res.status(500).json({ error: "❌ Error processing file", message: err.message });
       })
       .save(outputPath);
   } catch (err) {
     console.error(err);
-    res.status(500).send("❌ Error: " + err.message);
+    res.status(500).json({ error: "❌ General error", message: err.message });
   }
 });
 
