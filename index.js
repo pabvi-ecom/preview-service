@@ -6,8 +6,12 @@ import { randomUUID } from "crypto";
 
 const app = express();
 
-// ✅ Aceptar audio en binario puro (desde n8n)
-app.use(express.raw({ type: "audio/mpeg", limit: "50mb" }));
+// ✅ Middleware para que Express lea bien los query params
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
+
+// 🟢 Solo después de eso definimos el RAW parser (para audio)
+app.use("/generate", express.raw({ type: "audio/mpeg", limit: "50mb" }));
 
 app.get("/", (_, res) => {
   res.send("🎵 Preview Service online. Send POST with MP3 binary to /generate");
@@ -16,17 +20,17 @@ app.get("/", (_, res) => {
 app.post("/generate", async (req, res) => {
   try {
     // ----------------------------------------------------------
-    // 1️⃣ OBTENER NOMBRE ORIGINAL
+    // 1️⃣ OBTENER NOMBRE ORIGINAL DEL QUERY
     // ----------------------------------------------------------
-    // n8n envía el header: x-filename: {{$binary.audio.fileName}}
-    const originalFileName = req.headers["x-filename"] || `${randomUUID()}.mp3`;
+    const originalFileName =
+      req.query.filename ||
+      req.headers["x-filename"] ||
+      `${randomUUID()}.mp3`;
 
-    // Asegurar que termina en .mp3 (por seguridad)
     const normalizedName = originalFileName.toLowerCase().endsWith(".mp3")
       ? originalFileName
       : `${originalFileName}.mp3`;
 
-    // Crear nombre para el preview -> añade "p" antes de .mp3
     const baseName = normalizedName.replace(/\.mp3$/i, "");
     const previewName = `${baseName}p.mp3`;
 
@@ -39,7 +43,6 @@ app.post("/generate", async (req, res) => {
     const inputPath = `/tmp/input-${id}.mp3`;
     const outputPath = `/tmp/output-${id}.mp3`;
 
-    // req.body debe ser un Buffer (binario real)
     if (!Buffer.isBuffer(req.body)) {
       console.error("❌ Error: req.body no es un Buffer");
       return res
@@ -60,30 +63,18 @@ app.post("/generate", async (req, res) => {
       .audioBitrate("128k")
       .audioFrequency(44100)
       .on("end", () => {
-        try {
-          const buffer = fs.readFileSync(outputPath);
+        const buffer = fs.readFileSync(outputPath);
+        fs.unlinkSync(inputPath);
+        fs.unlinkSync(outputPath);
 
-          // Limpieza de temporales
-          fs.unlinkSync(inputPath);
-          fs.unlinkSync(outputPath);
+        res.setHeader("Content-Type", "application/json");
+        res.send({
+          filename: previewName,
+          mimeType: "audio/mpeg",
+          data: buffer.toString("base64"),
+        });
 
-          // ----------------------------------------------------------
-          // 4️⃣ DEVOLVER RESPUESTA JSON
-          // ----------------------------------------------------------
-          res.setHeader("Content-Type", "application/json");
-          res.send({
-            filename: previewName,
-            mimeType: "audio/mpeg",
-            data: buffer.toString("base64"),
-          });
-
-          console.log(`✅ Preview generado: ${previewName}`);
-        } catch (readErr) {
-          console.error("❌ Error al leer el archivo generado:", readErr);
-          res
-            .status(500)
-            .json({ error: "Read error", message: readErr.message });
-        }
+        console.log(`✅ Preview generado: ${previewName}`);
       })
       .on("error", (err) => {
         console.error("❌ Error en FFmpeg:", err.message);
@@ -98,9 +89,6 @@ app.post("/generate", async (req, res) => {
   }
 });
 
-// ----------------------------------------------------------
-// 5️⃣ INICIAR SERVICIO
-// ----------------------------------------------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () =>
   console.log(`🚀 Preview service running on port ${PORT}`)
