@@ -58,7 +58,7 @@ app.post("/generate", async (req, res) => {
     ffmpeg.setFfmpegPath(ffmpegPath);
     ffmpeg(inputPath)
       .setStartTime(0)
-      .duration(20)
+      .duration(25)
       .audioCodec("libmp3lame")
       .audioBitrate("128k")
       .audioFrequency(44100)
